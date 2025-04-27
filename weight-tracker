@@ -1,0 +1,98 @@
+from datetime import datetime
+from garminconnect import Garmin
+from notion_client import Client
+from dotenv import load_dotenv, dotenv_values
+import pytz
+import os
+
+# Constants
+local_tz = pytz.timezone("America/New_York")
+
+# Load environment variables
+load_dotenv()
+CONFIG = dotenv_values()
+
+def get_weight_data(garmin):
+    return garmin.get_weight_data()
+
+def format_weight(kg_value):
+    if kg_value is None:
+        return None
+    # Convert kg to lbs (1 kg = 2.20462 lbs)
+    weight_lbs = kg_value * 2.20462
+    return round(weight_lbs, 1)
+
+def format_percentage(value):
+    if value is None:
+        return None
+    return round(value, 1)
+
+def format_metabolic_age(value):
+    if value is None:
+        return None
+    return int(value)
+
+def format_bmr(value):
+    if value is None:
+        return None
+    return int(value)
+
+def format_date_for_name(date_str):
+    return datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y") if date_str else "Unknown"
+
+def weight_data_exists(client, database_id, date):
+    query = client.databases.query(
+        database_id=database_id,
+        filter={"property": "Long Date", "date": {"equals": date}}
+    )
+    results = query.get('results', [])
+    return results[0] if results else None
+
+def create_weight_data(client, database_id, weight_data):
+    if not weight_data:
+        return
+    
+    today = datetime.today().date().isoformat()
+    
+    properties = {
+        "Date": {"title": [{"text": {"content": format_date_for_name(today)}}]},
+        "Long Date": {"date": {"start": today}},
+        "Weight (lbs)": {"number": format_weight(weight_data.get('weight'))},
+        "BMI": {"number": format_percentage(weight_data.get('bmi'))},
+        "Body Fat (%)": {"number": format_percentage(weight_data.get('bodyFat'))},
+        "Muscle Mass (%)": {"number": format_percentage(weight_data.get('muscleMass'))},
+        "Bone Mass (%)": {"number": format_percentage(weight_data.get('boneMass'))},
+        "Visceral Fat (%)": {"number": format_percentage(weight_data.get('visceralFat'))},
+        "Metabolic Age": {"number": format_metabolic_age(weight_data.get('metabolicAge'))},
+        "Basal Metabolic Rate (kcal)": {"number": format_bmr(weight_data.get('basalMet'))}
+    }
+    
+    client.pages.create(
+        parent={"database_id": database_id},
+        properties=properties,
+        icon={"emoji": "⚖️"}
+    )
+    print(f"Created weight entry for: {today}")
+
+def main():
+    load_dotenv()
+
+    # Initialize Garmin and Notion clients using environment variables
+    garmin_email = os.getenv("GARMIN_EMAIL")
+    garmin_password = os.getenv("GARMIN_PASSWORD")
+    notion_token = os.getenv("NOTION_TOKEN")
+    database_id = os.getenv("NOTION_WEIGHT_DB_ID")
+
+    # Initialize Garmin client and login
+    garmin = Garmin(garmin_email, garmin_password)
+    garmin.login()
+    client = Client(auth=notion_token)
+
+    data = get_weight_data(garmin)
+    if data:
+        today = datetime.today().date().isoformat()
+        if not weight_data_exists(client, database_id, today):
+            create_weight_data(client, database_id, data)
+
+if __name__ == '__main__':
+    main() 
